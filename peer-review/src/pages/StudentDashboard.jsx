@@ -1,5 +1,19 @@
-import React, { useState } from 'react';
-import { Clock, CheckCircle2, Award, AlertCircle, FileText, Upload, Send, X, MessageSquare, Star, TrendingUp } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Clock, CheckCircle2, Award, AlertCircle, FileText, Upload, Send, X, MessageSquare, Star, TrendingUp, Users } from 'lucide-react';
+import api, { getSubmissionAttachment } from '../api';
+import AttachmentPreview from '../components/AttachmentPreview';
+
+const isGroupAssignment = (item = {}) => {
+  if (typeof item.group === 'boolean') return item.group;
+  if (typeof item.isGroup === 'boolean') return item.isGroup;
+  if (typeof item.isGroupProject === 'boolean') return item.isGroupProject;
+  if (typeof item.assignmentGroup === 'boolean') return item.assignmentGroup;
+
+  const type = String(item.assignmentType ?? item.type ?? '').toLowerCase();
+  if (type.includes('group')) return true;
+
+  return false;
+};
 
 const StudentDashboard = () => {
   // Modal and Form States
@@ -9,39 +23,88 @@ const StudentDashboard = () => {
   const [selectedFile, setSelectedFile] = useState(null);
 
   // Pending Assignments Data
-  const [pendingAssignments, setPendingAssignments] = useState([
-    { id: 1, title: "Data Analysis Project (Section A)", author: "Dr. Sarah Johnson", desc: "Analyze the provided dataset and create visualizations showing key trends. Write a summary report explaining your findings and methodology.", due: "24/3/2026", daysLeft: "30 days left" },
-    { id: 2, title: "Programming Assignment: Web API (Section A)", author: "Dr. Sarah Johnson", desc: "Develop a RESTful API using Node.js and Express. Include authentication, CRUD operations, and proper error handling.", due: "13/4/2026", daysLeft: "50 days left" }
-  ]);
+  const [pendingAssignments, setPendingAssignments] = useState([]);
 
   // Updated Submissions Data using actual numbers so we can calculate the average!
   // Use null if it hasn't been graded yet.
-  const [recentSubmissions, setRecentSubmissions] = useState([
-    { 
-      id: 101, 
-      title: "Literature Review Essay (Section A)", 
-      date: "15/2/2026", 
-      status: "Fully Graded", 
-      teacherScore: 92, // out of 100
-      peerScore: 4.8    // out of 5
-    },
-    { 
-      id: 102, 
-      title: "Mobile App Design Document (Section A)", 
-      date: "20/2/2026", 
-      status: "Peer Reviewed", 
-      teacherScore: null, 
-      peerScore: 4.2 
-    },
-    { 
-      id: 103, 
-      title: "Research Paper: Climate Change Impact", 
-      date: "22/2/2026", 
-      status: "Pending Review", 
-      teacherScore: null, 
-      peerScore: null 
-    }
-  ]);
+  const [recentSubmissions, setRecentSubmissions] = useState([]);
+
+  useEffect(() => {
+    const loadDashboardData = async () => {
+      try {
+        const [assignmentsRes, submissionsRes] = await Promise.all([
+          api.get('/assignments/student'),
+          api.get('/submissions/student')
+        ]);
+
+        const submissions = submissionsRes.data || [];
+        const submittedAssignmentIds = new Set(submissions.map((s) => s.assignmentId));
+
+        const pending = (assignmentsRes.data || [])
+          .filter((a) => !submittedAssignmentIds.has(a.id))
+          .map((a) => ({
+            id: a.id,
+            title: a.title,
+            author: a.teacherName || 'Course Instructor',
+            teacherId: a.teacherId || a.createdById || a.teacherUserId || null,
+            desc: a.description,
+            isGroup: isGroupAssignment(a),
+            due: a.dueDate ? new Date(a.dueDate).toLocaleDateString('en-GB') : '-',
+            daysLeft: a.dueDate
+              ? `${Math.max(0, Math.ceil((new Date(a.dueDate) - new Date()) / (1000 * 60 * 60 * 24)))} days left`
+              : '0 days left'
+          }));
+
+        const mappedSubs = submissions.map((s) => ({
+          id: s.id,
+          title: s.assignmentTitle,
+          isGroup: isGroupAssignment(s),
+          date: s.submittedAt ? new Date(s.submittedAt).toLocaleDateString('en-GB') : '-',
+          status: s.status === 'FULLY_GRADED' ? 'Fully Graded' : s.status === 'PEER_REVIEWED' ? 'Peer Reviewed' : 'Pending Review',
+          teacherScore: s.teacherScore,
+          peerScore: s.averagePeerScore ?? null,
+          peerReviewCount: s.peerReviewCount ?? 0,
+          maxScore: s.maxScore ?? 100,
+          attachment: getSubmissionAttachment(s)
+        }));
+
+        setPendingAssignments(pending);
+        setRecentSubmissions(mappedSubs);
+      } catch (error) {
+        setPendingAssignments([]);
+        setRecentSubmissions([]);
+      }
+    };
+
+    loadDashboardData();
+
+    const handleFocus = () => loadDashboardData();
+    const handleStorage = (event) => {
+      if (
+        event.key === 'peerlearn_review_update' ||
+        event.key === 'peerlearn_submission_update' ||
+        event.key === 'peerlearn_assignment_update'
+      ) {
+        loadDashboardData();
+      }
+    };
+    const handleReviewUpdate = () => loadDashboardData();
+    const handleSubmissionUpdate = () => loadDashboardData();
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('peerlearn-review-update', handleReviewUpdate);
+    window.addEventListener('peerlearn-submission-update', handleSubmissionUpdate);
+    const interval = setInterval(loadDashboardData, 30000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('peerlearn-review-update', handleReviewUpdate);
+      window.removeEventListener('peerlearn-submission-update', handleSubmissionUpdate);
+      clearInterval(interval);
+    };
+  }, []);
 
   // Modal Handlers
   const openModal = (assignment) => {
@@ -62,44 +125,112 @@ const StudentDashboard = () => {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // Remove from Pending
-    setPendingAssignments(pendingAssignments.filter(a => a.id !== selectedAssignment.id));
-    
-    // Add to Submissions dynamically with null scores (since it's not graded yet)
-    const newSubmission = {
-      id: Date.now(),
-      title: selectedAssignment.title,
-      date: new Date().toLocaleDateString('en-GB'),
-      status: "Pending Review",
-      teacherScore: null,
-      peerScore: null
-    };
-    setRecentSubmissions([newSubmission, ...recentSubmissions]);
-    
-    closeModal();
+
+    try {
+      const formData = new FormData();
+      formData.append('assignmentId', selectedAssignment.id);
+      formData.append('submissionText', submissionText);
+      if (selectedFile) {
+        formData.append('file', selectedFile);
+      }
+
+      const { data } = await api.post('/submissions', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      try {
+        const { data: me } = await api.get('/users/me');
+        const studentName = me?.fullName || 'A student';
+        const studentId = me?.studentId || me?.userId || 'N/A';
+        const section = me?.section || 'N/A';
+        const teacherUserId = selectedAssignment?.teacherId
+          || data?.teacherId
+          || data?.assignmentTeacherId
+          || data?.createdById;
+
+        if (teacherUserId) {
+          await api.post('/notifications', {
+            userId: teacherUserId,
+            type: 'ALERT',
+            title: 'New Assignment Submission',
+            message: `${studentName} (ID: ${studentId}, Section: ${section}) submitted ${selectedAssignment.title}.`
+          });
+        }
+      } catch (error) {
+        // submission should succeed even if teacher notification fails
+      }
+
+      setPendingAssignments(pendingAssignments.filter(a => a.id !== selectedAssignment.id));
+      const newSubmission = {
+        id: data.id,
+        title: data.assignmentTitle,
+        date: data.submittedAt ? new Date(data.submittedAt).toLocaleDateString('en-GB') : new Date().toLocaleDateString('en-GB'),
+        status: 'Pending Review',
+        teacherScore: null,
+        peerScore: null,
+        peerReviewCount: 0,
+        maxScore: data.maxScore ?? 100
+      };
+      setRecentSubmissions([newSubmission, ...recentSubmissions]);
+      closeModal();
+    } catch (error) {
+      // keep modal open if submit fails
+    }
   };
 
   // ==========================================
   // NEW: Calculate Averages & Stats automatically!
   // ==========================================
   const gradedByTeacher = recentSubmissions.filter(sub => sub.teacherScore !== null);
-  const gradedByPeer = recentSubmissions.filter(sub => sub.peerScore !== null);
+  const gradedByPeer = recentSubmissions.filter(sub => sub.peerScore !== null && (sub.peerReviewCount || 0) > 0);
 
   const totalTeacherGrades = gradedByTeacher.length;
-  const totalPeerReviews = gradedByPeer.length;
+  const totalPeerReviews = recentSubmissions.reduce((sum, sub) => sum + (sub.peerReviewCount || 0), 0);
 
-  // Calculate Average Teacher Score (out of 100)
-  const avgTeacherScore = totalTeacherGrades > 0 
-    ? (gradedByTeacher.reduce((sum, curr) => sum + curr.teacherScore, 0) / totalTeacherGrades).toFixed(1)
-    : 0;
+  const teacherTotals = gradedByTeacher.reduce(
+    (acc, sub) => {
+      const score = Number(sub.teacherScore);
+      const max = Number(sub.maxScore || 100);
+      if (Number.isNaN(score) || Number.isNaN(max) || max <= 0) return acc;
+      acc.earned += score;
+      acc.possible += max;
+      return acc;
+    },
+    { earned: 0, possible: 0 }
+  );
 
-  // Calculate Average Peer Score (out of 5)
-  const avgPeerScore = totalPeerReviews > 0 
-    ? (gradedByPeer.reduce((sum, curr) => sum + curr.peerScore, 0) / totalPeerReviews).toFixed(1)
+  const teacherAverageValue = teacherTotals.possible > 0
+    ? ((teacherTotals.earned / teacherTotals.possible) * 100)
     : 0;
+  const displayTeacherAverage = teacherAverageValue.toFixed(1);
+
+  const toPercentage = (scoreValue, maxScoreValue = 100, reviewCount = 1) => {
+    const score = Number(scoreValue);
+    const maxScore = Number(maxScoreValue);
+    const count = Number(reviewCount || 1);
+
+    if (Number.isNaN(score) || Number.isNaN(maxScore) || maxScore <= 0) return 0;
+
+    // If score looks cumulative across reviews, normalize by review count first.
+    const normalizedScore = score > maxScore ? (score / Math.max(count, 1)) : score;
+    return (normalizedScore / maxScore) * 100;
+  };
+
+  const peerPercentages = gradedByPeer
+    .map((sub) => toPercentage(sub.peerScore, sub.maxScore, sub.peerReviewCount))
+    .filter((value) => Number.isFinite(value));
+
+  const peerAverageValue = peerPercentages.length > 0
+    ? (peerPercentages.reduce((sum, curr) => sum + curr, 0) / peerPercentages.length)
+    : 0;
+  const displayPeerAverage = peerAverageValue.toFixed(1);
+
+  const overallAverageValue = (teacherAverageValue > 0 && peerAverageValue > 0)
+    ? (teacherAverageValue + peerAverageValue) / 2
+    : (teacherAverageValue || peerAverageValue || 0);
+  const displayOverallAverage = overallAverageValue.toFixed(1);
 
   return (
     <div className="dashboard-container">
@@ -152,14 +283,14 @@ const StudentDashboard = () => {
           <p style={{ color: '#94a3b8', fontSize: '0.95rem' }}>Your cumulative average scores across all graded projects</p>
         </div>
         
-        <div style={{ display: 'flex', gap: '1.5rem' }}>
+        <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
           {/* Teacher Average Box */}
           <div style={{ background: 'rgba(255,255,255,0.05)', padding: '1rem 1.5rem', borderRadius: '8px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
             <div style={{ color: '#c084fc', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.5rem' }}>
               Teacher Average
             </div>
             <div style={{ fontSize: '2rem', fontWeight: '700', color: 'white', lineHeight: '1' }}>
-              {avgTeacherScore}<span style={{ fontSize: '1rem', color: '#64748b' }}>/100</span>
+              {displayTeacherAverage}<span style={{ fontSize: '1rem', color: '#64748b' }}>%</span>
             </div>
           </div>
           
@@ -169,7 +300,17 @@ const StudentDashboard = () => {
               Peer Average
             </div>
             <div style={{ fontSize: '2rem', fontWeight: '700', color: 'white', lineHeight: '1' }}>
-              {avgPeerScore}<span style={{ fontSize: '1rem', color: '#64748b' }}>/5.0</span>
+              {displayPeerAverage}<span style={{ fontSize: '1rem', color: '#64748b' }}>%</span>
+            </div>
+          </div>
+
+          {/* Overall Average Box */}
+          <div style={{ background: 'rgba(255,255,255,0.05)', padding: '1rem 1.5rem', borderRadius: '8px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
+            <div style={{ color: '#fbbf24', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.5rem' }}>
+              Overall Average
+            </div>
+            <div style={{ fontSize: '2rem', fontWeight: '700', color: 'white', lineHeight: '1' }}>
+              {displayOverallAverage}<span style={{ fontSize: '1rem', color: '#64748b' }}>%</span>
             </div>
           </div>
         </div>
@@ -188,7 +329,24 @@ const StudentDashboard = () => {
               pendingAssignments.map(task => (
                 <div key={task.id} className="task-card">
                   <div className="task-header">
-                    <div className="task-title">{task.title}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <div className="task-title">{task.title}</div>
+                      <span
+                        style={{
+                          fontSize: '0.75rem',
+                          padding: '0.15rem 0.45rem',
+                          borderRadius: '999px',
+                          background: task.isGroup ? '#dbeafe' : '#f1f5f9',
+                          color: task.isGroup ? '#1d4ed8' : '#475569',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.25rem'
+                        }}
+                      >
+                        {task.isGroup ? <><Users size={12} /> Group Project</> : 'Individual'}
+                      </span>
+                    </div>
                     <div className="task-badge-orange">{task.daysLeft}</div>
                   </div>
                   <div className="task-author">by {task.author}</div>
@@ -209,10 +367,31 @@ const StudentDashboard = () => {
             <FileText size={20} /> Submissions & Feedback
           </div>
           <div className="scrollable-panel">
-            {recentSubmissions.map(sub => (
+            {recentSubmissions.length === 0 ? (
+              <p style={{ textAlign: 'center', color: '#64748b', marginTop: '2rem' }}>
+                No submissions yet. Submit an assignment to see your feedback here.
+              </p>
+            ) : recentSubmissions.map(sub => (
               <div key={sub.id} className="task-card sub-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <div className="task-header" style={{ marginBottom: 0 }}>
-                  <div className="task-title">{sub.title}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <div className="task-title">{sub.title}</div>
+                    <span
+                      style={{
+                        fontSize: '0.75rem',
+                        padding: '0.15rem 0.45rem',
+                        borderRadius: '999px',
+                        background: sub.isGroup ? '#dbeafe' : '#f1f5f9',
+                        color: sub.isGroup ? '#1d4ed8' : '#475569',
+                        fontWeight: 600,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem'
+                      }}
+                    >
+                      {sub.isGroup ? <><Users size={12} /> Group Project</> : 'Individual'}
+                    </span>
+                  </div>
                   <div className="task-badge-gray" style={{ 
                     background: sub.status === 'Fully Graded' ? '#dcfce7' : '#f1f5f9', 
                     color: sub.status === 'Fully Graded' ? '#166534' : '#64748b' 
@@ -221,6 +400,8 @@ const StudentDashboard = () => {
                   </div>
                 </div>
                 <div className="task-author" style={{ marginBottom: '0.5rem' }}>Submitted {sub.date}</div>
+
+                {sub.attachment?.url && <div style={{ marginTop: '0.75rem', marginBottom: '0.75rem' }}><AttachmentPreview attachment={sub.attachment} accentColor="#0ea5e9" /></div>}
                 
                 {/* Dynamically displaying the numeric scores from state */}
                 <div style={{ display: 'flex', gap: '1.5rem', marginTop: '0.5rem', paddingTop: '0.75rem', borderTop: '1px solid #e2e8f0' }}>
@@ -228,13 +409,13 @@ const StudentDashboard = () => {
                   {/* Teacher Score */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', fontWeight: '600', color: sub.teacherScore !== null ? '#7e22ce' : '#94a3b8' }}>
                     <Award size={16} /> 
-                    Teacher: {sub.teacherScore !== null ? `${sub.teacherScore}/100` : 'Pending'}
+                    Teacher: {sub.teacherScore !== null ? `${((Number(sub.teacherScore) / Math.max(Number(sub.maxScore || 100), 1)) * 100).toFixed(1)}%` : 'Pending'}
                   </div>
                   
                   {/* Peer Score */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', fontWeight: '600', color: sub.peerScore !== null ? '#0369a1' : '#94a3b8' }}>
                     <Star size={16} /> 
-                    Peers: {sub.peerScore !== null ? `${sub.peerScore}/5.0` : 'Pending'}
+                    Peers: {sub.peerScore !== null ? `${toPercentage(sub.peerScore, sub.maxScore, sub.peerReviewCount).toFixed(1)}%` : 'Pending'}
                   </div>
 
                 </div>
@@ -249,8 +430,9 @@ const StudentDashboard = () => {
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={closeModal}><X size={24} /></button>
-            <h2 className="modal-title">Submit Assignment</h2>
+            <h2 className="modal-title">{selectedAssignment.isGroup ? 'Submit Group Contribution' : 'Submit Assignment'}</h2>
             <p className="modal-subtitle">{selectedAssignment.title}</p>
+            <p className="modal-subtitle" style={{ marginTop: '-0.2rem' }}>Due: {selectedAssignment.due}</p>
             
             <div className="desc-box">
               <div className="desc-title">Assignment Description:</div>
@@ -290,7 +472,7 @@ const StudentDashboard = () => {
 
               <div className="modal-actions">
                 <button type="button" className="btn-cancel" onClick={closeModal}>Cancel</button>
-                <button type="submit" className="btn-teal"><Send size={16} /> Submit Assignment</button>
+                <button type="submit" className="btn-teal"><Send size={16} /> {selectedAssignment.isGroup ? 'Submit Contribution' : 'Submit Assignment'}</button>
               </div>
             </form>
           </div>

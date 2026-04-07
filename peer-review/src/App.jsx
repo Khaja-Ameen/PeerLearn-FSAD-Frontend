@@ -4,6 +4,8 @@ import Navigation from './components/Navigation';
 
 // Page Imports
 import Login from './pages/Login'; 
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import StudentDashboard from './pages/StudentDashboard';
 import TeacherDashboard from './pages/TeacherDashboard';
 import TeacherAssignments from './pages/TeacherAssignments';
@@ -34,6 +36,8 @@ function App() {
       <Routes>
         {/* Public Route */}
         <Route path="/" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         
         {/* Student Routes */}
         <Route path="/student" element={<DashboardLayout role="student"><StudentDashboard /></DashboardLayout>} />

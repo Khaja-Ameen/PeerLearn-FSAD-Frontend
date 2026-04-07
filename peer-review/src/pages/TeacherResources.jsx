@@ -1,61 +1,55 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2, X, FileText, MonitorPlay, Link as LinkIcon, CheckCircle2 } from 'lucide-react';
+import api from '../api';
 
 const TeacherResources = () => {
   const [toast, setToast] = useState(null);
   const [filter, setFilter] = useState('All Resources');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const fileInputRef = useRef(null);
   
   const [newResource, setNewResource] = useState({
     title: '',
     desc: '',
     type: 'Guides',
-    format: 'PDF',
-    link: ''
+    format: '',
+    link: '',
+    file: null
   });
 
-  const [resources, setResources] = useState([
-    {
-      id: 1,
-      title: "Peer Review Best Practices Guide",
-      desc: "Learn how to provide effective and constructive feedback",
-      type: "Guides",
-      format: "PDF",
-      downloads: 45,
-      bgStyle: "#fdf2f8", // light pink
-      borderStyle: "#fbcfe8"
-    },
-    {
-      id: 2,
-      title: "Research Paper Writing Tips",
-      desc: "Step-by-step guide for academic writing",
-      type: "Templates",
-      format: "DOC",
-      downloads: 67,
-      bgStyle: "#f0f9ff", // light blue
-      borderStyle: "#bae6fd"
-    },
-    {
-      id: 3,
-      title: "Citation Style Guide",
-      desc: "APA, MLA, and Chicago citation formats",
-      type: "Guides",
-      format: "PDF",
-      downloads: 112,
-      bgStyle: "#f8fafc", // light gray
-      borderStyle: "#e2e8f0"
-    },
-    {
-      id: 4,
-      title: "Academic Writing Workshop",
-      desc: "Video tutorial on effective academic writing",
-      type: "Tutorials",
-      format: "VIDEO",
-      downloads: 89,
-      bgStyle: "#f5f3ff", // light purple
-      borderStyle: "#ddd6fe"
-    }
-  ]);
+  const [resources, setResources] = useState([]);
+
+  const styleByType = (type) => {
+    if (type === 'Guides') return { bgStyle: '#fdf2f8', borderStyle: '#fbcfe8' };
+    if (type === 'Templates') return { bgStyle: '#f0f9ff', borderStyle: '#bae6fd' };
+    if (type === 'Tutorials') return { bgStyle: '#f5f3ff', borderStyle: '#ddd6fe' };
+    return { bgStyle: '#f8fafc', borderStyle: '#e2e8f0' };
+  };
+
+  useEffect(() => {
+    const loadResources = async () => {
+      try {
+        const query = filter === 'All Resources' ? '' : `?type=${encodeURIComponent(filter)}`;
+        const { data } = await api.get(`/resources${query}`);
+        const mapped = (data || []).map((item) => ({
+          id: item.id,
+          title: item.title,
+          desc: item.description,
+          type: item.type,
+          format: item.format,
+          downloads: item.downloadCount ?? 0,
+          bgStyle: styleByType(item.type).bgStyle,
+          borderStyle: styleByType(item.type).borderStyle,
+          link: item.link
+        }));
+        setResources(mapped);
+      } catch (error) {
+        setResources([]);
+      }
+    };
+
+    loadResources();
+  }, [filter]);
 
   const showToast = (title, subtitle) => {
     setToast({ title, subtitle });
@@ -65,36 +59,97 @@ const TeacherResources = () => {
   const handleOpenModal = () => setIsModalOpen(true);
   const handleCloseModal = () => {
     setIsModalOpen(false);
-    setNewResource({ title: '', desc: '', type: 'Guides', format: 'PDF', link: '' });
+    setNewResource({ title: '', desc: '', type: 'Guides', format: '', link: '', file: null });
   };
 
-  const handleCreateResource = (e) => {
+  const handleCreateResource = async (e) => {
     e.preventDefault();
-    const resourceToAdd = {
-      ...newResource,
-      id: Date.now(),
-      downloads: 0,
-      bgStyle: "#f0fdf4", // new resources get a light green bg
-      borderStyle: "#bbf7d0"
-    };
-    setResources([resourceToAdd, ...resources]);
-    handleCloseModal();
-    showToast("Resource Added Successfully!", "Students can now access this material.");
+    try {
+      let format = newResource.format;
+      
+      // Auto-detect format if file is uploaded
+      if (newResource.file) {
+        const fileName = newResource.file.name;
+        const ext = fileName.split('.').pop().toUpperCase();
+        format = ext || 'FILE';
+      }
+      
+      const payload = new FormData();
+      payload.append('title', newResource.title);
+      payload.append('description', newResource.desc);
+      payload.append('type', newResource.type);
+      payload.append('format', format);
+      
+      if (newResource.file) {
+        payload.append('file', newResource.file);
+      } else {
+        payload.append('link', newResource.link);
+      }
+      
+      const { data } = await api.post('/resources', payload, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      
+      const resourceToAdd = {
+        id: data.id,
+        title: data.title,
+        desc: data.description,
+        type: data.type,
+        format: data.format,
+        downloads: data.downloadCount ?? 0,
+        bgStyle: styleByType(data.type).bgStyle,
+        borderStyle: styleByType(data.type).borderStyle,
+        link: data.link
+      };
+      setResources([resourceToAdd, ...resources]);
+      handleCloseModal();
+      showToast("Resource Added Successfully!", "Students can now access this material.");
+    } catch (error) {
+      showToast("Failed to Add Resource", "Please try again.");
+    }
   };
 
-  const handleDelete = (id) => {
-    setResources(resources.filter(r => r.id !== id));
+  const handleDelete = async (id) => {
+    try {
+      await api.delete(`/resources/${id}`);
+      setResources(resources.filter(r => r.id !== id));
+    } catch (error) {
+      showToast("Delete Failed", "Unable to delete resource.");
+    }
   };
 
-  const filteredResources = filter === 'All Resources' 
-    ? resources 
-    : resources.filter(r => r.type === filter);
+  const clearSelectedFile = () => {
+    setNewResource({ ...newResource, file: null });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const normalizeResourceUrl = (rawUrl) => {
+    if (!rawUrl) return '';
+    if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
+    if (rawUrl.startsWith('/')) return `${window.location.origin}${rawUrl}`;
+    return `https://${rawUrl}`;
+  };
+
+  const handleViewResource = (resource) => {
+    const url = normalizeResourceUrl(resource?.link);
+    if (!url) {
+      showToast('No Resource Link', 'This resource does not have a file or URL.');
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const filteredResources = resources;
 
   // Calculate stats
   const totalResources = resources.length;
-  const totalDocs = resources.filter(r => r.format === 'PDF' || r.format === 'DOC').length;
-  const totalVideos = resources.filter(r => r.format === 'VIDEO').length;
-  const totalLinks = resources.filter(r => r.format === 'LINK').length;
+  const totalDocs = resources.filter(r => ['PDF', 'DOC', 'DOCX', 'TXT', 'XLS', 'XLSX', 'PPT', 'PPTX'].includes(r.format?.toUpperCase())).length;
+  const totalVideos = resources.filter(r => ['VIDEO', 'MP4', 'MOV', 'AVI', 'MKV', 'WMV'].includes(r.format?.toUpperCase())).length;
+  const totalLinks = resources.filter(r => ['LINK', 'URL'].includes(r.format?.toUpperCase())).length;
 
   return (
     <div className="dashboard-container">
@@ -164,11 +219,23 @@ const TeacherResources = () => {
 
       {/* RESOURCE CARDS GRID */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-        {filteredResources.map((item) => (
-          <div key={item.id} style={{ background: item.bgStyle, border: `1px solid ${item.borderStyle}`, borderRadius: '12px', padding: '1.5rem', display: 'flex', gap: '1rem', position: 'relative' }}>
+        {filteredResources.length === 0 ? (
+          <div style={{ gridColumn: '1 / -1', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '2.5rem 1.5rem', textAlign: 'center' }}>
+            <h3 style={{ color: '#0f172a', marginBottom: '0.5rem' }}>No resources found</h3>
+            <p style={{ color: '#64748b', margin: 0 }}>Upload your first resource to share with students.</p>
+          </div>
+        ) : filteredResources.map((item) => (
+          <div
+            key={item.id}
+            onClick={() => handleViewResource(item)}
+            style={{ background: item.bgStyle, border: `1px solid ${item.borderStyle}`, borderRadius: '12px', padding: '1.5rem', display: 'flex', gap: '1rem', position: 'relative', cursor: item.link ? 'pointer' : 'default' }}
+          >
             
             <button 
-              onClick={() => handleDelete(item.id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDelete(item.id);
+              }}
               style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', padding: '0.25rem' }}
               onMouseEnter={(e) => e.currentTarget.style.color = '#ef4444'}
               onMouseLeave={(e) => e.currentTarget.style.color = '#64748b'}
@@ -190,6 +257,27 @@ const TeacherResources = () => {
                 <span style={{ border: '1px solid #cbd5e1', background: 'white', color: '#475569', padding: '0.1rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: '600', textTransform: 'uppercase' }}>{item.type}</span>
                 <span style={{ border: '1px solid #cbd5e1', background: 'white', color: '#475569', padding: '0.1rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: '600', textTransform: 'uppercase' }}>{item.format}</span>
               </div>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleViewResource(item);
+                }}
+                style={{
+                  marginBottom: '0.75rem',
+                  border: '1px solid #cbd5e1',
+                  background: 'white',
+                  color: '#1e293b',
+                  borderRadius: '6px',
+                  padding: '0.35rem 0.75rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                View Resource
+              </button>
               
               <div style={{ fontSize: '0.8rem', color: '#64748b' }}>{item.downloads} student downloads</div>
             </div>
@@ -244,31 +332,80 @@ const TeacherResources = () => {
                     <option value="Tutorials">Tutorials</option>
                   </select>
                 </div>
-                <div className="input-group-modal">
-                  <label>Format</label>
-                  <select 
-                    className="textarea-field" 
-                    style={{ minHeight: '45px', padding: '0 0.75rem' }}
-                    value={newResource.format}
-                    onChange={(e) => setNewResource({...newResource, format: e.target.value})}
-                  >
-                    <option value="PDF">PDF Document</option>
-                    <option value="DOC">Word Document</option>
-                    <option value="VIDEO">Video Link</option>
-                    <option value="LINK">External Link</option>
-                  </select>
-                </div>
               </div>
 
               <div className="input-group-modal">
-                <label>File Upload or Link URL</label>
+                <label>Upload File or Paste Link URL</label>
+                <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
+                  <input 
+                    type="file" 
+                    id="file-upload"
+                    ref={fileInputRef}
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setNewResource({...newResource, file: e.target.files[0], link: ''});
+                      }
+                    }}
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => document.getElementById('file-upload').click()}
+                    style={{
+                      flex: 1,
+                      padding: '0.75rem',
+                      background: '#f1f5f9',
+                      border: '1px dashed #cbd5e1',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: '500',
+                      color: '#475569',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#e2e8f0';
+                      e.currentTarget.style.borderColor = '#94a3b8';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = '#f1f5f9';
+                      e.currentTarget.style.borderColor = '#cbd5e1';
+                    }}
+                  >
+                    {newResource.file ? `📎 ${newResource.file.name}` : '📁 Click to Upload File'}
+                  </button>
+                  {newResource.file && (
+                    <button
+                      type="button"
+                      onClick={clearSelectedFile}
+                      aria-label="Remove selected file"
+                      title="Remove selected file"
+                      style={{
+                        width: '42px',
+                        minWidth: '42px',
+                        height: '42px',
+                        borderRadius: '8px',
+                        border: '1px solid #cbd5e1',
+                        background: 'white',
+                        color: '#475569',
+                        fontSize: '1.25rem',
+                        lineHeight: 1,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '1rem' }}>or</p>
                 <input 
-                  type="text" 
+                  type="url" 
                   className="textarea-field" 
                   style={{ minHeight: '45px', padding: '0 0.75rem' }}
-                  placeholder="Paste URL or click to upload file..."
-                  value={newResource.link}
-                  onChange={(e) => setNewResource({...newResource, link: e.target.value})}
+                  placeholder="Paste URL (if not uploading a file)..."
+                  value={newResource.file ? '' : newResource.link}
+                  onChange={(e) => setNewResource({...newResource, link: e.target.value, file: null})}
+                  disabled={!!newResource.file}
+                  required={!newResource.file}
                 />
               </div>
 

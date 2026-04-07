@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Mail, User, Shield, Hash, LogOut } from 'lucide-react';
+import api from '../api';
 
 const StudentProfile = () => {
   const navigate = useNavigate();
@@ -9,14 +10,63 @@ const StudentProfile = () => {
   // Check if a teacher is viewing this profile based on the URL path
   const isTeacherView = location.pathname.includes('/teacher');
 
-  const studentData = location.state?.student || {
-    name: "Alex Morgan",
-    initials: "AM",
-    email: "2400030234@kluniversity.in",
-    role: "Student",
-    section: "Section A",
-    userId: "S001",
-    memberSince: "2026"
+  const [profileData, setProfileData] = useState(null);
+
+  const getStoredUser = () => {
+    try {
+      const raw = localStorage.getItem('user');
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      if (isTeacherView) return;
+      try {
+        const { data } = await api.get('/users/me');
+        const storedUser = getStoredUser();
+        setProfileData({
+          name: data.fullName || storedUser?.fullName || '',
+          initials: data.initials || '',
+          email: data.email || storedUser?.email || '',
+          role: data.role || storedUser?.role || 'STUDENT',
+          section: data.section || storedUser?.section || '',
+          userId: data.studentId || data.userId || storedUser?.studentId || storedUser?.userId || '',
+          memberSince: data.memberSince || storedUser?.memberSince || ''
+        });
+      } catch (error) {
+        const storedUser = getStoredUser();
+        if (storedUser) {
+          setProfileData({
+            name: storedUser.fullName || '',
+            initials: '',
+            email: storedUser.email || '',
+            role: storedUser.role || 'STUDENT',
+            section: storedUser.section || '',
+            userId: storedUser.studentId || storedUser.userId || '',
+            memberSince: storedUser.memberSince || ''
+          });
+        } else {
+          setProfileData(null);
+        }
+      }
+    };
+
+    loadProfile();
+  }, [isTeacherView]);
+
+  const sourceData = location.state?.student || profileData || {};
+  const normalizedRole = String(sourceData.role || profileData?.role || 'STUDENT').trim() || 'STUDENT';
+  const studentData = {
+    name: sourceData.name || '',
+    initials: sourceData.initials || '',
+    email: sourceData.email || '',
+    role: normalizedRole,
+    section: sourceData.section || '',
+    userId: sourceData.userId || sourceData.studentId || sourceData.idNumber || '',
+    memberSince: sourceData.memberSince || ''
   };
 
   const boxStyle = { background: 'white', borderRadius: '12px', padding: '1.5rem', border: '1px solid #f1f5f9', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' };
@@ -51,7 +101,7 @@ const StudentProfile = () => {
           <div style={{ color: '#334155', fontWeight: '500' }}>{studentData.section}</div>
         </div>
         <div style={boxStyle}>
-          <div style={{...labelStyle, color: '#9a3412'}}><Hash size={16}/> User ID</div>
+          <div style={{...labelStyle, color: '#9a3412'}}><Hash size={16}/> Student ID</div>
           <div style={{ color: '#334155', fontWeight: '500' }}>{studentData.userId}</div>
         </div>
       </div>

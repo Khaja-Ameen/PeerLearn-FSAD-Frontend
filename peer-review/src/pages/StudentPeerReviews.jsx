@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { MessageSquare, Star, CheckCircle2, X, Send, UserCircle, FileText } from 'lucide-react';
+import api, { getSubmissionAttachment } from '../api';
+import AttachmentPreview from '../components/AttachmentPreview';
 
 const StudentPeerReviews = () => {
   // Modal states
@@ -12,37 +14,50 @@ const StudentPeerReviews = () => {
   const [toast, setToast] = useState(null);
 
   // Distinct Mock Data for Peer Reviews (Fully Restored!)
-  const [peerReviews, setPeerReviews] = useState([
-    {
-      id: 101,
-      assignmentTitle: "Psychology Case Study: Behavioral Analysis",
-      peerId: "Anonymous Peer #4092",
-      submissionText: "In this case study, the subject exhibited clear signs of operant conditioning. By introducing positive reinforcement when the subject completed the puzzle, their completion time decreased by 40% over two weeks. However, I believe environmental factors in the testing room may have skewed the initial baseline data.",
-      dueDate: "28/3/2026",
-      maxPoints: 50,
-      status: "pending"
-    },
-    {
-      id: 102,
-      assignmentTitle: "World History: Industrial Revolution Essay",
-      peerId: "Anonymous Peer #1184",
-      submissionText: "The Industrial Revolution dramatically shifted the socio-economic landscape of 18th century Britain. While it introduced mass production and economic growth, it simultaneously led to severe urban overcrowding and poor labor conditions. The transition from agrarian societies to urban centers fundamentally changed the family dynamic.",
-      dueDate: "30/3/2026",
-      maxPoints: 100,
-      status: "pending"
-    },
-    {
-      id: 103,
-      assignmentTitle: "Creative Writing: Short Story Draft",
-      peerId: "Anonymous Peer #8832",
-      submissionText: "The neon lights flickered against the wet pavement. Detective Vance pulled his collar up against the biting wind, staring at the empty alleyway. 'They were just here,' he muttered to himself. A single red matchbook lay near the storm drain, the only clue left behind in the silent city.",
-      dueDate: "Past Due",
-      maxPoints: 100,
-      status: "completed",
-      givenScore: 92,
-      givenFeedback: "Excellent imagery and tone! You really captured the noir atmosphere. To improve, try showing Vance's internal thoughts a bit more rather than just having him speak aloud."
-    }
-  ]);
+  const [peerReviews, setPeerReviews] = useState([]);
+
+  useEffect(() => {
+    const loadReviews = async () => {
+      try {
+        const { data } = await api.get('/reviews/mine');
+        const mapped = (data || []).map((r) => ({
+          id: r.id,
+          assignmentTitle: r.assignmentTitle,
+          peerId: r.peerId,
+          submissionId: r.submissionId,
+          submissionText: r.submissionText,
+          attachment: getSubmissionAttachment(r),
+          dueDate: r.dueDate ? new Date(r.dueDate).toLocaleDateString('en-GB') : '-',
+          maxPoints: r.maxScore,
+          status: (r.status || '').toLowerCase(),
+          givenScore: r.score,
+          givenFeedback: r.feedbackText
+        }));
+        setPeerReviews(mapped);
+      } catch (error) {
+        setPeerReviews([]);
+      }
+    };
+
+    loadReviews();
+
+    const handleFocus = () => loadReviews();
+    const handleStorage = (event) => {
+      if (event.key === 'peerlearn_review_update' || event.key === 'peerlearn_submission_update') {
+        loadReviews();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('storage', handleStorage);
+    const interval = setInterval(loadReviews, 30000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('storage', handleStorage);
+      clearInterval(interval);
+    };
+  }, []);
 
   // NEW: Function to trigger the popup
   const showToast = (title, subtitle) => {
@@ -64,19 +79,36 @@ const StudentPeerReviews = () => {
     setScore('');
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // Update the review status to 'completed' and save the user's feedback
-    setPeerReviews(peerReviews.map(r => 
-      r.id === selectedReview.id 
-        ? { ...r, status: 'completed', givenScore: score, givenFeedback: feedbackText } 
-        : r
-    ));
-    closeModal();
 
-    // Trigger the success popup!
-    showToast("Review Submitted Successfully!", "Your feedback has been recorded.");
+    try {
+      const payload = {
+        score: Number(score),
+        feedbackText
+      };
+
+      if (selectedReview.submissionId) {
+        payload.submissionId = selectedReview.submissionId;
+      }
+
+      await api.post(`/reviews/${selectedReview.id}/submit`, payload);
+
+      setPeerReviews(peerReviews.map(r =>
+        r.id === selectedReview.id
+          ? { ...r, status: 'completed', givenScore: Number(score), givenFeedback: feedbackText }
+          : r
+      ));
+      localStorage.setItem('peerlearn_review_update', Date.now().toString());
+      localStorage.setItem('peerlearn_submission_update', Date.now().toString());
+      localStorage.setItem('peerlearn_notification_update', Date.now().toString());
+      window.dispatchEvent(new Event('peerlearn-review-update'));
+      window.dispatchEvent(new Event('peerlearn-submission-update'));
+      closeModal();
+      showToast("Review Submitted Successfully!", "Your feedback has been recorded.");
+    } catch (error) {
+      showToast("Submission Failed", "Please try again.");
+    }
   };
 
   const pendingReviews = peerReviews.filter(r => r.status === 'pending');
@@ -133,6 +165,7 @@ const StudentPeerReviews = () => {
                 <div className="submission-box" style={{ marginBottom: '1.5rem', fontStyle: 'italic', color: '#334155', borderLeft: '3px solid #cbd5e1' }}>
                   "{review.submissionText}"
                 </div>
+                {review.attachment?.url && <div style={{ marginBottom: '1.5rem' }}><AttachmentPreview attachment={review.attachment} accentColor="#6366f1" /></div>}
                 
                 <div className="card-bottom">
                   <div className="card-meta">
@@ -202,6 +235,7 @@ const StudentPeerReviews = () => {
                 <UserCircle size={16}/> {selectedReview.peerId}'s Work:
               </div>
               <div className="desc-text" style={{ fontStyle: 'italic', marginTop: '0.5rem' }}>"{selectedReview.submissionText}"</div>
+              {selectedReview.attachment?.url && <div style={{ marginTop: '1rem' }}><AttachmentPreview attachment={selectedReview.attachment} accentColor="#6366f1" /></div>}
             </div>
             
             <form onSubmit={handleSubmit}>

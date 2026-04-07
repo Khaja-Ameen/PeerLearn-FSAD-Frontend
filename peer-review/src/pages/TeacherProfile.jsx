@@ -1,19 +1,93 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Mail, Briefcase, Hash, LogOut } from 'lucide-react';
+import api from '../api';
 
 const TeacherProfile = () => {
   const navigate = useNavigate();
 
-  const teacherData = {
-    name: "Dr. Sarah Johnson",
-    initials: "DSJ",
-    email: "sarah.johnson@school.edu",
-    role: "Teacher",
-    department: "Computer Science",
-    userId: "T001",
-    memberSince: "2020"
+  const [teacherData, setTeacherData] = useState({
+    name: '',
+    initials: '',
+    email: '',
+    role: 'TEACHER',
+    department: '',
+    userId: '',
+    facultyId: '',
+    memberSince: ''
+  });
+
+  const getStoredUser = () => {
+    try {
+      const raw = localStorage.getItem('user');
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
   };
+
+  const getTeacherQualificationMap = () => {
+    try {
+      return JSON.parse(localStorage.getItem('peerlearn_teacher_qualification_map') || '{}');
+    } catch (error) {
+      return {};
+    }
+  };
+
+  const formatTeacherName = (name, qualification) => {
+    const cleanName = (name || '').trim();
+    if (!cleanName) return '';
+
+    const title = (qualification || '').trim();
+    if (!title) return cleanName;
+
+    const knownTitles = ['Dr.', 'Dr', 'Mr.', 'Mr', 'Mrs.', 'Mrs', 'Ms.', 'Ms', 'Prof.', 'Prof'];
+    const firstWord = cleanName.split(' ')[0];
+    if (knownTitles.includes(firstWord)) {
+      return cleanName;
+    }
+
+    return `${title}. ${cleanName}`;
+  };
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        const { data } = await api.get('/users/me');
+        const storedUser = getStoredUser();
+        const qualificationMap = getTeacherQualificationMap();
+        const qualification = data.qualification || storedUser?.qualification || qualificationMap[(data.email || storedUser?.email || '').toLowerCase()] || '';
+        setTeacherData({
+          name: formatTeacherName(data.fullName || storedUser?.fullName || '', qualification),
+          initials: data.initials,
+          email: data.email || storedUser?.email || '',
+          role: data.role || storedUser?.role || 'TEACHER',
+          department: data.department || storedUser?.department || '',
+          userId: data.facultyId || data.userId || storedUser?.facultyId || storedUser?.userId || '',
+          facultyId: data.facultyId || data.userId || storedUser?.facultyId || storedUser?.userId || '',
+          memberSince: data.memberSince || storedUser?.memberSince || ''
+        });
+      } catch (error) {
+        const storedUser = getStoredUser();
+        if (storedUser) {
+          const qualificationMap = getTeacherQualificationMap();
+          const qualification = storedUser.qualification || qualificationMap[(storedUser.email || '').toLowerCase()] || '';
+          setTeacherData({
+            name: formatTeacherName(storedUser.fullName || '', qualification),
+            initials: '',
+            email: storedUser.email || '',
+            role: storedUser.role || 'TEACHER',
+            department: storedUser.department || '',
+            userId: storedUser.facultyId || storedUser.userId || '',
+            facultyId: storedUser.facultyId || storedUser.userId || '',
+            memberSince: storedUser.memberSince || ''
+          });
+        }
+      }
+    };
+
+    loadProfile();
+  }, []);
 
   const boxStyle = { background: 'white', borderRadius: '12px', padding: '1.5rem', border: '1px solid #f1f5f9', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' };
   const labelStyle = { display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#0ea5e9', fontWeight: '600', fontSize: '0.9rem', marginBottom: '1rem', borderBottom: '1px solid #f0f9ff', paddingBottom: '0.5rem' };
@@ -49,7 +123,7 @@ const TeacherProfile = () => {
           {[
             { label: 'Account Type', value: 'Instructor Account' },
             { label: 'Status', value: 'Active', isBadge: true },
-            { label: 'Instructor ID', value: teacherData.userId },
+            { label: 'Faculty ID', value: teacherData.facultyId },
             { label: 'Member Since', value: teacherData.memberSince }
           ].map((item, idx) => (
             <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '1.5rem 0', borderBottom: idx === 3 ? 'none' : '1px solid #f1f5f9' }}>

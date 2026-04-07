@@ -1,12 +1,48 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Bell, LogOut, User } from 'lucide-react';
+import api from '../api';
 
 const Navigation = ({ role }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const [showDropdown, setShowDropdown] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [profileInitials, setProfileInitials] = useState('');
   const dropdownRef = useRef(null);
+
+  const getCurrentUserKey = () => {
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return 'default';
+      const user = JSON.parse(raw);
+      return String(user?.id || user?.email || user?.userId || 'default');
+    } catch (error) {
+      return 'default';
+    }
+  };
+
+  const getStoredMap = (key) => {
+    try {
+      return JSON.parse(localStorage.getItem(key) || '{}');
+    } catch (error) {
+      return {};
+    }
+  };
+
+  const isAssignmentPostedNotification = (item) => {
+    const title = String(item?.title || '').toLowerCase();
+    const message = String(item?.message || '').toLowerCase();
+    return title.includes('posted an assignment') || (message.includes(' posted ') && message.includes(' due: '));
+  };
+
+  const getInitials = (fullName) => {
+    if (!fullName || typeof fullName !== 'string') return '';
+    const parts = fullName.trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  };
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -17,6 +53,101 @@ const Navigation = ({ role }) => {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    const loadUnreadCount = async () => {
+      try {
+        const { data } = await api.get('/notifications');
+        const baseNotifications = role === 'teacher'
+          ? (data || []).filter((item) => !isAssignmentPostedNotification(item))
+          : (data || []);
+
+        let unread = baseNotifications.filter((item) => !item.read).length;
+
+        if (role === 'student') {
+          const userKey = getCurrentUserKey();
+          const readMap = getStoredMap(`peerlearn_assignment_alert_read_${userKey}`);
+          const deletedMap = getStoredMap(`peerlearn_assignment_alert_deleted_${userKey}`);
+
+          const [assignmentRes, submissionsRes] = await Promise.all([
+            api.get('/assignments/student').catch(() => ({ data: [] })),
+            api.get('/submissions/student').catch(() => ({ data: [] }))
+          ]);
+
+          const submittedAssignmentIds = new Set((submissionsRes.data || []).map((s) => s.assignmentId));
+          const syntheticUnread = (assignmentRes.data || []).filter((a) => {
+            const syntheticId = `assignment-${a.id}`;
+            return !submittedAssignmentIds.has(a.id) && !readMap[syntheticId] && !deletedMap[syntheticId];
+          }).length;
+
+          unread += syntheticUnread;
+        }
+
+        setUnreadCount(unread);
+      } catch (error) {
+        setUnreadCount(0);
+      }
+    };
+
+    loadUnreadCount();
+
+    const handleFocus = () => loadUnreadCount();
+    const handleStorage = (event) => {
+      if (event.key === 'peerlearn_notification_update') {
+        loadUnreadCount();
+      }
+    };
+    const handleNotificationUpdate = () => loadUnreadCount();
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('peerlearn-notification-update', handleNotificationUpdate);
+    const interval = setInterval(loadUnreadCount, 30000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('peerlearn-notification-update', handleNotificationUpdate);
+      clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    const fromStorage = () => {
+      try {
+        const raw = localStorage.getItem('user');
+        if (!raw) return '';
+        const parsed = JSON.parse(raw);
+        return getInitials(parsed?.fullName);
+      } catch (error) {
+        return '';
+      }
+    };
+
+    const setDefault = () => setProfileInitials(role === 'teacher' ? 'T' : 'S');
+
+    const storedInitials = fromStorage();
+    if (storedInitials) {
+      setProfileInitials(storedInitials);
+      return;
+    }
+
+    const loadProfile = async () => {
+      try {
+        const { data } = await api.get('/users/me');
+        const initials = getInitials(data?.fullName);
+        if (initials) {
+          setProfileInitials(initials);
+        } else {
+          setDefault();
+        }
+      } catch (error) {
+        setDefault();
+      }
+    };
+
+    loadProfile();
+  }, [role]);
 
   const links = role === 'teacher' 
     ? [
@@ -33,8 +164,6 @@ const Navigation = ({ role }) => {
         { name: 'Calendar', path: '/student/calendar' },
         { name: 'Resources', path: '/student/resources' }
       ];
-
-  const profileInitials = role === 'teacher' ? 'DSJ' : 'AM';
 
   return (
     <nav className="navbar">
@@ -60,7 +189,7 @@ const Navigation = ({ role }) => {
       <div className="nav-right" style={{ position: 'relative' }} ref={dropdownRef}>
         <div className="bell-icon-wrapper" onClick={() => navigate(`/${role}/notifications`)} style={{ cursor: 'pointer' }}>
           <Bell size={22} color="#64748b" />
-          <div className="notification-dot">3</div>
+          {unreadCount > 0 && <div className="notification-dot">{unreadCount}</div>}
         </div>
         
         <div 

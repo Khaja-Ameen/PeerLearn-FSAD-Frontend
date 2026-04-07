@@ -1,55 +1,54 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FileText, Download, MonitorPlay, BookOpen } from 'lucide-react';
+import api from '../api';
 
 const StudentResources = () => {
   const [filter, setFilter] = useState('All Resources');
+  const [resources, setResources] = useState([]);
 
-  const resources = [
-    {
-      id: 1,
-      title: "Peer Review Best Practices Guide",
-      desc: "Learn how to provide effective and constructive feedback",
-      type: "Guides",
-      format: "PDF",
-      downloads: 45,
-      bgStyle: "#fdf2f8", // Light Pink
-      borderStyle: "#fbcfe8"
-    },
-    {
-      id: 2,
-      title: "Research Paper Writing Tips",
-      desc: "Step-by-step guide for academic writing",
-      type: "Templates",
-      format: "DOC",
-      downloads: 67,
-      bgStyle: "#f0f9ff", // Light Blue
-      borderStyle: "#bae6fd"
-    },
-    {
-      id: 3,
-      title: "Citation Style Guide",
-      desc: "APA, MLA, and Chicago citation formats",
-      type: "Guides",
-      format: "PDF",
-      downloads: 89,
-      bgStyle: "#fdf2f8", // Light Pink
-      borderStyle: "#fbcfe8"
-    },
-    {
-      id: 4,
-      title: "Academic Writing Workshop",
-      desc: "Video tutorial on effective academic writing",
-      type: "Tutorials",
-      format: "VIDEO",
-      downloads: 34,
-      bgStyle: "#f5f3ff", // Light Purple
-      borderStyle: "#ddd6fe"
+  const styleByType = (type) => {
+    if (type === 'Guides') return { bgStyle: '#fdf2f8', borderStyle: '#fbcfe8' };
+    if (type === 'Templates') return { bgStyle: '#f0f9ff', borderStyle: '#bae6fd' };
+    return { bgStyle: '#f5f3ff', borderStyle: '#ddd6fe' };
+  };
+
+  useEffect(() => {
+    const loadResources = async () => {
+      try {
+        const query = filter === 'All Resources' ? '' : `?type=${encodeURIComponent(filter)}`;
+        const { data } = await api.get(`/resources${query}`);
+        const mapped = (data || []).map((item) => ({
+          id: item.id,
+          title: item.title,
+          desc: item.description,
+          type: item.type,
+          format: item.format,
+          link: item.link,
+          downloads: item.downloadCount ?? 0,
+          ...styleByType(item.type)
+        }));
+        setResources(mapped);
+      } catch (error) {
+        setResources([]);
+      }
+    };
+
+    loadResources();
+  }, [filter]);
+
+  const filteredResources = resources;
+
+  const handleDownload = async (item) => {
+    try {
+      await api.post(`/resources/${item.id}/download`);
+      setResources((prev) => prev.map((r) => r.id === item.id ? { ...r, downloads: r.downloads + 1 } : r));
+      if (item.link) {
+        window.open(item.link, '_blank');
+      }
+    } catch (error) {
+      // keep UI stable on failure
     }
-  ];
-
-  const filteredResources = filter === 'All Resources' 
-    ? resources 
-    : resources.filter(r => r.type === filter);
+  };
 
   return (
     <div className="dashboard-container">
@@ -83,7 +82,15 @@ const StudentResources = () => {
 
       {/* RESOURCES GRID */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '1.5rem' }}>
-        {filteredResources.map((item) => (
+        {filteredResources.length === 0 ? (
+          <div style={{ gridColumn: '1 / -1', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '2.75rem 1.5rem', textAlign: 'center' }}>
+            <BookOpen size={40} color="#94a3b8" style={{ marginBottom: '0.75rem' }} />
+            <h3 style={{ color: '#0f172a', marginBottom: '0.5rem' }}>No resources available</h3>
+            <p style={{ color: '#64748b', margin: 0 }}>
+              {filter === 'All Resources' ? 'No learning materials have been uploaded yet.' : `No ${filter.toLowerCase()} are available right now.`}
+            </p>
+          </div>
+        ) : filteredResources.map((item) => (
           <div key={item.id} style={{ background: item.bgStyle, border: `1px solid ${item.borderStyle}`, borderRadius: '12px', padding: '1.5rem', display: 'flex', gap: '1.25rem' }}>
             
             <div style={{ background: 'white', padding: '1rem', borderRadius: '12px', height: 'fit-content', border: `1px solid ${item.borderStyle}` }}>
@@ -108,6 +115,7 @@ const StudentResources = () => {
               <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '1.25rem' }}>{item.downloads} downloads</div>
 
               <button style={{ background: '#a855f7', color: 'white', border: 'none', padding: '0.6rem 1.25rem', borderRadius: '8px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', transition: 'background 0.2s' }}
+                onClick={() => handleDownload(item)}
                 onMouseEnter={(e) => e.currentTarget.style.background = '#9333ea'}
                 onMouseLeave={(e) => e.currentTarget.style.background = '#a855f7'}
               >

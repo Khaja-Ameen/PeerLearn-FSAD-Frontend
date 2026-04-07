@@ -1,60 +1,189 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Bell, Award, Star, Clock, FileText, CheckCircle2, Trash2 } from 'lucide-react';
+import api from '../api';
 
 const StudentNotifications = () => {
-  const [notifications, setNotifications] = useState([
-    {
-      id: 1,
-      type: "grade",
-      title: "New Grade Posted",
-      message: "Dr. Sarah Johnson has graded your 'Research Paper: Climate Change Impact'.",
-      time: "2 hours ago",
-      read: false,
-      color: "#a855f7",
-      bg: "#f3e8ff",
-      icon: <Award size={20} />
-    },
-    {
-      id: 2,
-      type: "review",
-      title: "Peer Review Received",
-      message: "An anonymous peer has reviewed your Data Analysis Project.",
-      time: "5 hours ago",
-      read: false,
-      color: "#0ea5e9",
-      bg: "#e0f2fe",
-      icon: <Star size={20} />
-    },
-    {
-      id: 3,
-      type: "alert",
-      title: "Upcoming Deadline",
-      message: "Your 'Mobile App Design Document' is due tomorrow at 11:59 PM.",
-      time: "1 day ago",
-      read: true,
-      color: "#f97316",
-      bg: "#ffedd5",
-      icon: <Clock size={20} />
-    },
-    {
-      id: 4,
-      type: "system",
-      title: "New Assignment Available",
-      message: "A new assignment has been posted in Section A.",
-      time: "2 days ago",
-      read: true,
-      color: "#10b981",
-      bg: "#dcfce7",
-      icon: <FileText size={20} />
-    }
-  ]);
+  const [notifications, setNotifications] = useState([]);
 
-  const markAllAsRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, read: true })));
+  const getCurrentRole = () => {
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return '';
+      const user = JSON.parse(raw);
+      return String(user?.role || '').toUpperCase();
+    } catch (error) {
+      return '';
+    }
   };
 
-  const deleteNotification = (id) => {
-    setNotifications(notifications.filter(n => n.id !== id));
+  const isAssignmentPostedNotification = (item) => {
+    const title = String(item?.title || '').toLowerCase();
+    const message = String(item?.message || '').toLowerCase();
+    return title.includes('posted an assignment') || (message.includes(' posted ') && message.includes(' due: '));
+  };
+
+  const getCurrentUserKey = () => {
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return 'default';
+      const user = JSON.parse(raw);
+      return String(user?.id || user?.email || user?.userId || 'default');
+    } catch (error) {
+      return 'default';
+    }
+  };
+
+  const getStoredMap = (key) => {
+    try {
+      return JSON.parse(localStorage.getItem(key) || '{}');
+    } catch (error) {
+      return {};
+    }
+  };
+
+  const setStoredMap = (key, value) => {
+    localStorage.setItem(key, JSON.stringify(value));
+  };
+
+  const formatTeacherName = (name, qualification) => {
+    const cleanName = (name || '').trim();
+    if (!cleanName) return 'Your teacher';
+
+    const title = (qualification || '').trim();
+    if (!title) return cleanName;
+
+    const knownTitles = ['Dr.', 'Dr', 'Mr.', 'Mr', 'Mrs.', 'Mrs', 'Ms.', 'Ms', 'Prof.', 'Prof'];
+    const firstWord = cleanName.split(' ')[0];
+    if (knownTitles.includes(firstWord)) {
+      return cleanName;
+    }
+
+    return `${title}. ${cleanName}`;
+  };
+
+  const styleByType = (type) => {
+    const value = (type || '').toLowerCase();
+    if (value === 'grade') return { color: '#a855f7', bg: '#f3e8ff', icon: <Award size={20} /> };
+    if (value === 'review') return { color: '#0ea5e9', bg: '#e0f2fe', icon: <Star size={20} /> };
+    if (value === 'alert') return { color: '#f97316', bg: '#ffedd5', icon: <Clock size={20} /> };
+    return { color: '#10b981', bg: '#dcfce7', icon: <FileText size={20} /> };
+  };
+
+  useEffect(() => {
+    const loadNotifications = async () => {
+      try {
+        const userKey = getCurrentUserKey();
+        const readKey = `peerlearn_assignment_alert_read_${userKey}`;
+        const deletedKey = `peerlearn_assignment_alert_deleted_${userKey}`;
+        const readMap = getStoredMap(readKey);
+        const deletedMap = getStoredMap(deletedKey);
+
+        const [notificationsRes, assignmentRes, submissionsRes] = await Promise.all([
+          api.get('/notifications'),
+          api.get('/assignments/student').catch(() => ({ data: [] })),
+          api.get('/submissions/student').catch(() => ({ data: [] }))
+        ]);
+
+        const role = getCurrentRole();
+        const mapped = (notificationsRes.data || [])
+          .filter((n) => !(role === 'TEACHER' && isAssignmentPostedNotification(n)))
+          .map((n) => ({
+          id: n.id,
+          type: n.type,
+          title: n.title,
+          message: n.message,
+          time: n.time,
+          read: n.read,
+          ...styleByType(n.type)
+        }));
+
+        const submittedAssignmentIds = new Set((submissionsRes.data || []).map((s) => s.assignmentId));
+        const assignmentAlerts = (assignmentRes.data || [])
+          .filter((a) => !submittedAssignmentIds.has(a.id))
+          .map((a) => {
+            const alertId = `assignment-${a.id}`;
+            if (deletedMap[alertId]) return null;
+
+            const dueText = a.dueDate ? new Date(a.dueDate).toLocaleString('en-GB') : '-';
+            const teacherName = formatTeacherName(a.teacherName, a.teacherQualification);
+            return {
+              id: alertId,
+              type: 'ALERT',
+              title: `${teacherName} posted an assignment`,
+              message: `${teacherName} posted ${a.title}. Due: ${dueText}`,
+              time: 'New',
+              read: !!readMap[alertId],
+              ...styleByType('ALERT')
+            };
+          })
+          .filter(Boolean);
+
+        setNotifications(role === 'TEACHER' ? mapped : [...assignmentAlerts, ...mapped]);
+      } catch (error) {
+        setNotifications([]);
+      }
+    };
+
+    loadNotifications();
+
+    const handleFocus = () => loadNotifications();
+    const handleStorage = (event) => {
+      if (event.key === 'peerlearn_notification_update') {
+        loadNotifications();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('storage', handleStorage);
+    const interval = setInterval(loadNotifications, 30000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('storage', handleStorage);
+      clearInterval(interval);
+    };
+  }, []);
+
+  const markAllAsRead = async () => {
+    try {
+      await api.patch('/notifications/read-all').catch(() => {});
+
+      const userKey = getCurrentUserKey();
+      const readKey = `peerlearn_assignment_alert_read_${userKey}`;
+      const readMap = getStoredMap(readKey);
+      notifications
+        .filter((n) => String(n.id).startsWith('assignment-'))
+        .forEach((n) => {
+          readMap[n.id] = true;
+        });
+      setStoredMap(readKey, readMap);
+
+      setNotifications(notifications.map(n => ({ ...n, read: true })));
+      localStorage.setItem('peerlearn_notification_update', Date.now().toString());
+      window.dispatchEvent(new Event('peerlearn-notification-update'));
+    } catch (error) {
+      // keep current view when request fails
+    }
+  };
+
+  const deleteNotification = async (id) => {
+    try {
+      if (String(id).startsWith('assignment-')) {
+        const userKey = getCurrentUserKey();
+        const deletedKey = `peerlearn_assignment_alert_deleted_${userKey}`;
+        const deletedMap = getStoredMap(deletedKey);
+        deletedMap[id] = true;
+        setStoredMap(deletedKey, deletedMap);
+      } else {
+        await api.delete(`/notifications/${id}`);
+      }
+
+      setNotifications(notifications.filter(n => n.id !== id));
+      localStorage.setItem('peerlearn_notification_update', Date.now().toString());
+      window.dispatchEvent(new Event('peerlearn-notification-update'));
+    } catch (error) {
+      // keep current view when request fails
+    }
   };
 
   const unreadCount = notifications.filter(n => !n.read).length;

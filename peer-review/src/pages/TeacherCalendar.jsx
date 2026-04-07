@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Clock, Users } from 'lucide-react';
+import api from '../api';
 
 const TeacherCalendar = () => {
   const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 1, 1)); 
-  const [selectedDay, setSelectedDay] = useState(24);
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState(new Date().getDate());
+  const [allDeadlines, setAllDeadlines] = useState([]);
 
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth();
@@ -31,14 +33,51 @@ const TeacherCalendar = () => {
     setSelectedDay(null);
   };
 
-  // Mock Deadlines Data
-  const allDeadlines = [
-    { id: 1, day: 14, month: 1, year: 2026, title: "Collect Mobile App Designs", target: "Section A & B", time: "11:59 AM", color: "#3b82f6" }, // Past event!
-    { id: 2, day: 24, month: 1, year: 2026, title: "Data Analysis Projects Due", target: "All Sections", time: "2:45 PM", color: "#f97316" },
-    { id: 3, day: 26, month: 1, year: 2026, title: "Finalize Mid-Term Grades", target: "Administration", time: "5:00 PM", color: "#e11d48" },
-    { id: 4, day: 28, month: 1, year: 2026, title: "Publish Peer Review Marks", target: "Section A", time: "8:00 AM", color: "#a855f7" },
-    { id: 5, day: 12, month: 2, year: 2026, title: "Grade Mid-Term Exams", target: "All Sections", time: "5:00 PM", color: "#e11d48" }
-  ];
+  useEffect(() => {
+    const loadDeadlines = async () => {
+      try {
+        const { data } = await api.get('/assignments/teacher');
+        const mapped = (data || []).map((a) => {
+          const date = new Date(a.dueDate);
+          return {
+            id: a.id,
+            day: date.getDate(),
+            month: date.getMonth(),
+            year: date.getFullYear(),
+            title: a.title,
+            target: `Section ${a.section || '-'}`,
+            time: date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+            color: a.group ? '#3b82f6' : '#f97316'
+          };
+        });
+        setAllDeadlines(mapped);
+      } catch (error) {
+        setAllDeadlines([]);
+      }
+    };
+
+    loadDeadlines();
+
+    const handleFocus = () => loadDeadlines();
+    const handleStorage = (event) => {
+      if (event.key === 'peerlearn_assignment_update') {
+        loadDeadlines();
+      }
+    };
+    const handleAssignmentUpdate = () => loadDeadlines();
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('peerlearn-assignment-update', handleAssignmentUpdate);
+    const interval = setInterval(loadDeadlines, 30000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('peerlearn-assignment-update', handleAssignmentUpdate);
+      clearInterval(interval);
+    };
+  }, []);
 
   // Exclude past events
   const currentMonthDeadlines = allDeadlines.filter(d => {

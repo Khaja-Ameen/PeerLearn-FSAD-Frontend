@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Clock, FileText } from 'lucide-react';
+import api from '../api';
 
 const StudentCalendar = () => {
   const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
   // State for the currently viewed month/year
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 1, 1)); 
-  const [selectedDay, setSelectedDay] = useState(24);
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState(new Date().getDate());
+  const [allDeadlines, setAllDeadlines] = useState([]);
 
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth();
@@ -35,15 +37,80 @@ const StudentCalendar = () => {
     setSelectedDay(null);
   };
 
-  // Mock Deadlines Data
-  const allDeadlines = [
-    { id: 1, day: 14, month: 1, year: 2026, title: "Mobile App Design Document", type: "Group Project", time: "8:30 AM", color: "#0ea5e9" }, // This is in the past, it will be hidden!
-    { id: 2, day: 24, month: 1, year: 2026, title: "Data Analysis Project", type: "Assignment", time: "2:45 PM", color: "#f97316" },
-    { id: 3, day: 24, month: 1, year: 2026, title: "Research Paper Draft", type: "Assignment", time: "11:59 PM", color: "#10b981" },
-    { id: 4, day: 28, month: 1, year: 2026, title: "Peer Review: Psychology", type: "Peer Review", time: "5:00 PM", color: "#a855f7" },
-    { id: 5, day: 10, month: 2, year: 2026, title: "Mid-Term Exam", type: "Exam", time: "10:00 AM", color: "#ef4444" },
-    { id: 6, day: 15, month: 2, year: 2026, title: "History Essay", type: "Assignment", time: "11:59 PM", color: "#f97316" }
-  ];
+  useEffect(() => {
+    const loadDeadlines = async () => {
+      try {
+        const [assignmentsRes, reviewsRes, submissionsRes] = await Promise.all([
+          api.get('/assignments/student'),
+          api.get('/reviews/mine'),
+          api.get('/submissions/student')
+        ]);
+
+        // Create a set of submitted assignment IDs
+        const submittedAssignmentIds = new Set(
+          (submissionsRes.data || []).map((s) => s.assignmentId)
+        );
+
+        const assignmentDeadlines = (assignmentsRes.data || [])
+          .filter((a) => !submittedAssignmentIds.has(a.id))
+          .map((a) => {
+            const date = new Date(a.dueDate);
+            return {
+              id: `a-${a.id}`,
+              day: date.getDate(),
+              month: date.getMonth(),
+              year: date.getFullYear(),
+              title: a.title,
+              type: a.group ? 'Group Project' : 'Assignment',
+              time: date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+              color: a.group ? '#0ea5e9' : '#f97316'
+            };
+          });
+
+        const reviewDeadlines = (reviewsRes.data || [])
+          .filter((r) => r.status === 'PENDING' || r.status === 'pending')
+          .map((r) => {
+            const date = new Date(r.dueDate);
+            return {
+              id: `r-${r.id}`,
+              day: date.getDate(),
+              month: date.getMonth(),
+              year: date.getFullYear(),
+              title: `Peer Review: ${r.assignmentTitle}`,
+              type: 'Peer Review',
+              time: date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+              color: '#a855f7'
+            };
+          });
+
+        setAllDeadlines([...assignmentDeadlines, ...reviewDeadlines]);
+      } catch (error) {
+        setAllDeadlines([]);
+      }
+    };
+
+    loadDeadlines();
+
+    const handleFocus = () => loadDeadlines();
+    const handleStorage = (event) => {
+      if (event.key === 'peerlearn_assignment_update') {
+        loadDeadlines();
+      }
+    };
+    const handleAssignmentUpdate = () => loadDeadlines();
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('peerlearn-assignment-update', handleAssignmentUpdate);
+    const interval = setInterval(loadDeadlines, 30000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('peerlearn-assignment-update', handleAssignmentUpdate);
+      clearInterval(interval);
+    };
+  }, []);
 
   // ONLY show deadlines that are for the current month AND are >= today!
   const currentMonthDeadlines = allDeadlines.filter(d => {

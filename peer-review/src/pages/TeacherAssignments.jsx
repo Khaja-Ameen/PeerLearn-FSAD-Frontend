@@ -43,6 +43,29 @@ const parseDisplayDueDate = (displayValue) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const formatDelayDuration = (milliseconds) => {
+  const totalMinutes = Math.max(1, Math.floor(milliseconds / 60000));
+  if (totalMinutes < 60) {
+    return `${totalMinutes} minute${totalMinutes === 1 ? '' : 's'}`;
+  }
+
+  const totalHours = Math.floor(totalMinutes / 60);
+  if (totalHours < 24) {
+    const remainingMinutes = totalMinutes % 60;
+    if (remainingMinutes === 0) {
+      return `${totalHours} hour${totalHours === 1 ? '' : 's'}`;
+    }
+    return `${totalHours} hour${totalHours === 1 ? '' : 's'} ${remainingMinutes} minute${remainingMinutes === 1 ? '' : 's'}`;
+  }
+
+  const totalDays = Math.floor(totalHours / 24);
+  const remainingHours = totalHours % 24;
+  if (remainingHours === 0) {
+    return `${totalDays} day${totalDays === 1 ? '' : 's'}`;
+  }
+  return `${totalDays} day${totalDays === 1 ? '' : 's'} ${remainingHours} hour${remainingHours === 1 ? '' : 's'}`;
+};
+
 const intersects = (setA, setB) => {
   for (const value of setA) {
     if (setB.has(value)) return true;
@@ -80,6 +103,9 @@ const TeacherAssignments = () => {
   const [viewerGroups, setViewerGroups] = useState([]);
   const [submissionGradeDrafts, setSubmissionGradeDrafts] = useState({});
   const [submissionGradeErrors, setSubmissionGradeErrors] = useState({});
+  const [bulkMissingFeedback, setBulkMissingFeedback] = useState('No submission before deadline.');
+  const [bulkMissingError, setBulkMissingError] = useState('');
+  const [isBulkMissingGrading, setIsBulkMissingGrading] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isGroupManagerOpen, setIsGroupManagerOpen] = useState(false);
@@ -582,6 +608,9 @@ const TeacherAssignments = () => {
     setViewerGroups([]);
     setSubmissionGradeDrafts({});
     setSubmissionGradeErrors({});
+    setBulkMissingFeedback('No submission before deadline.');
+    setBulkMissingError('');
+    setIsBulkMissingGrading(false);
 
     try {
       const submissionsResults = await Promise.allSettled(
@@ -611,6 +640,10 @@ const TeacherAssignments = () => {
         );
 
         const includeAll = targetSections.size === 0 || targetSections.has('ALL');
+        const assignmentIdBySection = new Map(
+          Object.entries(assignment?.sectionsById || {}).map(([id, section]) => [normalizeSection(section), Number(id)])
+        );
+        const fallbackAssignmentId = Number(assignmentIds[0]);
 
         const eligibleStudents = (studentsData || []).filter((student) => {
           const role = String(student?.role || '').toUpperCase();
@@ -631,15 +664,28 @@ const TeacherAssignments = () => {
           getSubmissionTokens(submission).forEach((token) => submittedTokens.add(token));
         });
 
+        const gradedMissingResults = await Promise.allSettled(
+          assignmentIds.map((id) => api.get(`/teacher-grading-v2/assignment/${id}/graded-missing-students`))
+        );
+        const gradedMissingStudentIds = new Set(
+          gradedMissingResults.flatMap((result) => {
+            if (result.status !== 'fulfilled') return [];
+            return (result.value?.data?.studentIds || []).map((id) => String(id));
+          })
+        );
+
         const missingStudents = eligibleStudents
           .filter((student) => {
             const studentTokens = collectTokens(student?.id, student?.userId, student?.studentId, student?.email);
+            if (gradedMissingStudentIds.has(String(student?.id))) return false;
             return !intersects(studentTokens, submittedTokens);
           })
           .map((student) => ({
-            id: String(student?.studentId || student?.userId || student?.id || '').trim(),
+            id: String(student?.id || '').trim(),
+            identifier: String(student?.studentId || student?.userId || student?.id || '').trim(),
             name: String(student?.fullName || student?.name || 'Student').trim(),
-            section: normalizeSection(student?.section)
+            section: normalizeSection(student?.section),
+            __assignmentId: assignmentIdBySection.get(normalizeSection(student?.section)) || fallbackAssignmentId
           }));
 
         setMissingSubmissionStudents(missingStudents);
@@ -705,7 +751,17 @@ const TeacherAssignments = () => {
     setViewerGroups([]);
     setSubmissionGradeDrafts({});
     setSubmissionGradeErrors({});
+    setBulkMissingFeedback('No submission before deadline.');
+    setBulkMissingError('');
+    setIsBulkMissingGrading(false);
   };
+
+  const isSubmissionViewerOverdue = useMemo(() => {
+    const dueRaw = submissionViewerAssignment?.dueRaw;
+    const dueDisplay = submissionViewerAssignment?.due;
+    const dueDate = dueRaw ? new Date(dueRaw) : parseDisplayDueDate(dueDisplay);
+    return dueDate instanceof Date && !Number.isNaN(dueDate.getTime()) && Date.now() > dueDate.getTime();
+  }, [submissionViewerAssignment?.dueRaw, submissionViewerAssignment?.due]);
 
   const getSubmissionTokens = (submission) => collectTokens(
     submission?.studentId,
@@ -835,6 +891,30 @@ const TeacherAssignments = () => {
     return {
       canGrade: true,
       helper: `Group complete: ${submittedMembers.length}/${memberList.length} submitted.`
+    };
+  };
+
+  const getLateSubmissionInfo = (submission) => {
+    const dueRaw = submissionViewerAssignment?.dueRaw;
+    const dueDisplay = submissionViewerAssignment?.due;
+    const dueDate = dueRaw ? new Date(dueRaw) : parseDisplayDueDate(dueDisplay);
+    const submittedDate = submission?.submittedAt ? new Date(submission.submittedAt) : null;
+
+    if (!(dueDate instanceof Date) || Number.isNaN(dueDate.getTime())) {
+      return { isLate: false, message: '' };
+    }
+    if (!(submittedDate instanceof Date) || Number.isNaN(submittedDate.getTime())) {
+      return { isLate: false, message: '' };
+    }
+
+    const delay = submittedDate.getTime() - dueDate.getTime();
+    if (delay <= 0) {
+      return { isLate: false, message: '' };
+    }
+
+    return {
+      isLate: true,
+      message: `Assignment was submitted ${formatDelayDuration(delay)} after the deadline.`
     };
   };
 
@@ -1008,6 +1088,61 @@ const TeacherAssignments = () => {
         ...prev,
         [key]: userMessage
       }));
+    }
+  };
+
+  const gradeAllMissingStudentsFromViewer = async () => {
+    if (!isSubmissionViewerOverdue) {
+      setBulkMissingError('You can grade not-submitted students only after due date.');
+      return;
+    }
+
+    const feedbackText = String(bulkMissingFeedback || '').trim();
+    if (!feedbackText) {
+      setBulkMissingError('Feedback is required before grading all not-submitted students.');
+      return;
+    }
+
+    if (!Array.isArray(missingSubmissionStudents) || missingSubmissionStudents.length === 0) {
+      setBulkMissingError('No not-submitted students found for this assignment.');
+      return;
+    }
+
+    setBulkMissingError('');
+    setIsBulkMissingGrading(true);
+
+    try {
+      const requests = missingSubmissionStudents.map((student) => {
+        const assignmentId = Number(student?.__assignmentId || submissionViewerAssignment?.assignmentIds?.[0] || submissionViewerAssignment?.id);
+        return api.post('/teacher-grading-v2/grade-missing', {
+          assignmentId,
+          studentId: Number(student.id),
+          score: 0,
+          feedback: feedbackText
+        });
+      });
+
+      const results = await Promise.allSettled(requests);
+      const succeededIds = new Set(
+        results
+          .map((result, index) => (result.status === 'fulfilled' ? String(missingSubmissionStudents[index].id) : null))
+          .filter(Boolean)
+      );
+
+      if (succeededIds.size > 0) {
+        setMissingSubmissionStudents((prev) => prev.filter((student) => !succeededIds.has(String(student.id))));
+      }
+
+      const failedCount = results.length - succeededIds.size;
+      if (failedCount === 0) {
+        showToast('Grades submitted', `Assigned 0 marks to ${succeededIds.size} not-submitted students.`);
+      } else if (succeededIds.size > 0) {
+        showToast('Partially completed', `Assigned grades to ${succeededIds.size} students. ${failedCount} failed.`);
+      } else {
+        setBulkMissingError('Unable to submit missing grades. Please try again.');
+      }
+    } finally {
+      setIsBulkMissingGrading(false);
     }
   };
 
@@ -1352,13 +1487,50 @@ const TeacherAssignments = () => {
                 <div style={{ color: '#92400e', fontWeight: 700, fontSize: '0.88rem', marginBottom: '0.4rem' }}>
                   Not Submitted ({missingSubmissionStudents.length})
                 </div>
+                <div style={{ color: isSubmissionViewerOverdue ? '#166534' : '#92400e', fontSize: '0.8rem', marginBottom: '0.55rem' }}>
+                  {isSubmissionViewerOverdue
+                    ? 'Due date exceeded: you can now assign marks for not-submitted students.'
+                    : 'Marks for not-submitted students can be assigned only after due date.'}
+                </div>
+
+                <div style={{ marginBottom: '0.6rem', border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: '8px', padding: '0.55rem 0.6rem' }}>
+                  <div style={{ color: '#7c2d12', fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.35rem' }}>
+                    Bulk grading
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', alignItems: 'start' }}>
+                    <textarea
+                      className="textarea-field"
+                      style={{ minHeight: '58px' }}
+                      value={bulkMissingFeedback}
+                      onChange={(e) => setBulkMissingFeedback(e.target.value)}
+                      placeholder="Feedback for all not-submitted students"
+                      disabled={!isSubmissionViewerOverdue || isBulkMissingGrading}
+                    />
+                    <button
+                      type="button"
+                      className="btn-cyan"
+                      style={{ minWidth: '220px', background: isSubmissionViewerOverdue && !isBulkMissingGrading ? '#f97316' : '#cbd5e1', color: '#fff' }}
+                      disabled={!isSubmissionViewerOverdue || isBulkMissingGrading}
+                      onClick={gradeAllMissingStudentsFromViewer}
+                    >
+                      {isBulkMissingGrading ? 'Submitting...' : 'Give 0 to All Not Submitted'}
+                    </button>
+                  </div>
+
+                  {bulkMissingError && (
+                    <div style={{ marginTop: '0.4rem', color: '#dc2626', fontSize: '0.78rem' }}>
+                      {bulkMissingError}
+                    </div>
+                  )}
+                </div>
+
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
                   {missingSubmissionStudents.map((student) => (
                     <span
                       key={`${student.id}-${student.section}`}
                       style={{ background: '#fef3c7', color: '#78350f', borderRadius: '999px', padding: '0.2rem 0.5rem', fontSize: '0.78rem', fontWeight: 600 }}
                     >
-                      {student.name}{student.id ? ` (${student.id})` : ''}{student.section ? ` - ${student.section}` : ''}
+                      {student.name}{student.identifier ? ` (${student.identifier})` : ''}{student.section ? ` - ${student.section}` : ''}
                     </span>
                   ))}
                 </div>
@@ -1392,6 +1564,7 @@ const TeacherAssignments = () => {
                     const isGraded = status === 'FULLY_GRADED';
                     const gradeDraft = submissionGradeDrafts[String(s.id)] || { score: '', feedback: '' };
                     const eligibility = getGroupGradeEligibility(s);
+                    const lateInfo = getLateSubmissionInfo(s);
                     const maxScore = Number(s.maxScore || submissionViewerAssignment?.points || 100);
                     const attachment = getSubmissionAttachment(s);
                     return (
@@ -1410,6 +1583,12 @@ const TeacherAssignments = () => {
                         <div style={{ color: '#64748b', fontSize: '0.8rem' }}>
                           Submitted: {s.submittedAt ? new Date(s.submittedAt).toLocaleString('en-GB') : '-'}
                         </div>
+
+                        {lateInfo.isLate && (
+                          <div style={{ marginTop: '0.45rem', color: '#b45309', fontSize: '0.8rem', fontWeight: 600 }}>
+                            {lateInfo.message}
+                          </div>
+                        )}
 
                         {attachment?.url && (
                           <div style={{ marginTop: '0.55rem' }}>

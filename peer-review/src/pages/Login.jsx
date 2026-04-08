@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, Check, Eye, EyeOff, LogIn, UserPlus } from 'lucide-react';
 import api from '../api';
+import { isValidPasswordByPolicy, PASSWORD_POLICY_TEXT } from '../utils/passwordPolicy';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -22,6 +23,7 @@ const Login = () => {
   const [captchaInput, setCaptchaInput] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -80,8 +82,55 @@ const Login = () => {
     }
   };
 
+  const loginWithRoleValidation = (data) => {
+    const selectedRole = role.toUpperCase();
+
+    if (String(data?.role || '').toUpperCase() !== selectedRole) {
+      setErrorMessage(`This account is registered as ${data?.role || 'another role'}. Please select the correct role and try again.`);
+      generateCaptcha();
+      return;
+    }
+
+    const teacherQualificationMap = getTeacherQualificationMap();
+    const mappedQualification = teacherQualificationMap[email.trim().toLowerCase()];
+    const normalizedUser = { ...data };
+
+    if (String(data.role || '').toUpperCase() === 'TEACHER') {
+      const qualification = data.qualification || mappedQualification || '';
+      if (qualification) {
+        normalizedUser.qualification = qualification;
+        normalizedUser.fullName = formatTeacherName(data.fullName, qualification);
+      }
+    }
+
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('user', JSON.stringify(normalizedUser));
+
+    if (data.role === 'STUDENT') navigate('/student');
+    else navigate('/teacher');
+  };
+
+  const normalizeAuthErrorMessage = (backendMessage, fallbackMessage) => {
+    const message = String(backendMessage || '').trim().toLowerCase();
+    if (!message) return fallbackMessage;
+
+    if (
+      message.includes('bad credentials') ||
+      message.includes('invalid email or password') ||
+      message.includes('incorrect email or password') ||
+      message.includes('wrong credentials')
+    ) {
+      return 'Wrong email or password. Please try again.';
+    }
+
+    return backendMessage || fallbackMessage;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
     setErrorMessage('');
     setSuccessMessage('');
 
@@ -95,6 +144,11 @@ const Login = () => {
       if (!isLoginView) {
         if (password !== confirmPassword) {
           setErrorMessage('Enter valid credentials.');
+          return;
+        }
+
+        if (!isValidPasswordByPolicy(password)) {
+          setErrorMessage(PASSWORD_POLICY_TEXT);
           return;
         }
 
@@ -153,38 +207,40 @@ const Login = () => {
         return;
       }
 
-      const { data } = await api.post('/auth/login', { email, password });
-      const selectedRole = role.toUpperCase();
-
-      if (String(data?.role || '').toUpperCase() !== selectedRole) {
-        setErrorMessage(`This account is registered as ${data?.role || 'another role'}. Please select the correct role and try again.`);
-        generateCaptcha();
+      try {
+        await api.post('/auth/login-otp', { email, password });
+        sessionStorage.setItem('peerlearn_pending_otp', JSON.stringify({
+          email: email.trim(),
+          password
+        }));
+        navigate('/verify-otp', {
+          state: {
+            email: email.trim(),
+            role: role.toUpperCase()
+          }
+        });
         return;
-      }
-
-      const teacherQualificationMap = getTeacherQualificationMap();
-      const mappedQualification = teacherQualificationMap[email.trim().toLowerCase()];
-      const normalizedUser = { ...data };
-
-      if (String(data.role || '').toUpperCase() === 'TEACHER') {
-        const qualification = data.qualification || mappedQualification || '';
-        if (qualification) {
-          normalizedUser.qualification = qualification;
-          normalizedUser.fullName = formatTeacherName(data.fullName, qualification);
+      } catch (otpRequestError) {
+        const otpStatus = otpRequestError?.response?.status;
+        if (otpStatus === 404 || otpStatus === 405) {
+          const { data } = await api.post('/auth/login', { email, password });
+          loginWithRoleValidation(data);
+          return;
         }
+        throw otpRequestError;
       }
-
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(normalizedUser));
-
-      if (data.role === 'STUDENT') navigate('/student');
-      else navigate('/teacher');
     } catch (error) {
       const status = error?.response?.status;
+      const backendMessage = String(error?.response?.data?.message || '').trim();
       if (isLoginView && (status === 401 || status === 403 || status === 400 || status === 404 || status === 422)) {
-        setErrorMessage('Wrong credentials. Please try again.');
+        setErrorMessage(normalizeAuthErrorMessage(backendMessage, 'Wrong email or password. Please try again.'));
       } else if (status === 401 || status === 403 || status === 400) {
-        setErrorMessage('Enter valid credentials.');
+        // Check if it's a duplicate ID error during sign-up
+        if (!isLoginView && (backendMessage.includes('Student ID') || backendMessage.includes('Faculty ID'))) {
+          setErrorMessage(backendMessage);
+        } else {
+          setErrorMessage(normalizeAuthErrorMessage(backendMessage, 'Wrong email or password. Please try again.'));
+        }
       } else if (status === 409) {
         setErrorMessage('This email is already registered. Please use a different email or log in.');
       } else {
@@ -194,6 +250,8 @@ const Login = () => {
       if (isLoginView) {
         generateCaptcha();
       }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -394,6 +452,12 @@ const Login = () => {
               </div>
             </div>
 
+            {!isLoginView && (
+              <p className="demo-text" style={{ textAlign: 'left', marginTop: '-6px', marginBottom: '12px' }}>
+                {PASSWORD_POLICY_TEXT}
+              </p>
+            )}
+
             {isLoginView && (
               <div className="input-group">
                 <label>Captcha *</label>
@@ -445,9 +509,11 @@ const Login = () => {
 
             <button 
               type="submit" 
+              disabled={isSubmitting}
               className={`submit-btn ${!isLoginView ? 'signup-gradient' : ''}`}
+              style={isSubmitting ? { opacity: 0.7, cursor: 'not-allowed' } : undefined}
             >
-              {isLoginView ? 'Sign In' : 'Create Account'}
+              {isSubmitting ? 'Please wait...' : (isLoginView ? 'Sign In' : 'Create Account')}
             </button>
 
             {isLoginView && (

@@ -4,6 +4,7 @@ import Navigation from './components/Navigation';
 
 // Page Imports
 import Login from './pages/Login'; 
+import OtpVerification from './pages/OtpVerification';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import StudentDashboard from './pages/StudentDashboard';
@@ -36,6 +37,7 @@ function App() {
       <Routes>
         {/* Public Route */}
         <Route path="/" element={<Login />} />
+        <Route path="/verify-otp" element={<OtpVerification />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         

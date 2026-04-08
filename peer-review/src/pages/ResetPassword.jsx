@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BookOpen } from 'lucide-react';
 import api from '../api';
+import { isValidPasswordByPolicy, PASSWORD_POLICY_TEXT } from '../utils/passwordPolicy';
 
 const ResetPassword = () => {
   const navigate = useNavigate();
@@ -25,6 +26,11 @@ const ResetPassword = () => {
 
     if (newPassword !== confirmPassword) {
       setErrorMessage('Passwords do not match.');
+      return;
+    }
+
+    if (!isValidPasswordByPolicy(newPassword)) {
+      setErrorMessage(PASSWORD_POLICY_TEXT);
       return;
     }
 
@@ -75,6 +81,10 @@ const ResetPassword = () => {
                 />
               </div>
             </div>
+
+            <p className="demo-text" style={{ textAlign: 'left', marginTop: '-6px', marginBottom: '12px' }}>
+              {PASSWORD_POLICY_TEXT}
+            </p>
 
             <div className="input-group">
               <label>Confirm New Password</label>

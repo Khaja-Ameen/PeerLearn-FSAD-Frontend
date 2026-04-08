@@ -101,6 +101,27 @@ const resolveStudentLabel = (lookup, explicitName, explicitId, fallbackText) => 
 
 const normalizeTextKey = (value) => String(value ?? '').trim().toLowerCase();
 
+const buildAssignmentSignature = (assignment) => {
+  return [
+    normalizeTextKey(assignment?.title),
+    normalizeTextKey(assignment?.description),
+    String(assignment?.dueDate || '').trim(),
+    String(assignment?.points ?? ''),
+    String(assignment?.peerReviewsRequired ?? ''),
+    String(Boolean(assignment?.group ?? assignment?.isGroup ?? false)),
+    String(assignment?.groupLimit ?? ''),
+    normalizeTextKey(assignment?.groupMode)
+  ].join('||');
+};
+
+const getGroupedAssignmentCount = (assignments = []) => {
+  const signatures = new Set();
+  (assignments || []).forEach((assignment) => {
+    signatures.add(buildAssignmentSignature(assignment));
+  });
+  return signatures.size;
+};
+
 const TeacherDashboard = () => {
   // Modal States
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -153,8 +174,12 @@ const TeacherDashboard = () => {
           ? studentsData.filter((s) => !dummyEmails.has((s.email || '').toLowerCase())).length
           : (statsData.students ?? 0);
 
+        const groupedAssignmentCount = assignmentsResult.status === 'fulfilled'
+          ? getGroupedAssignmentCount(assignmentsData)
+          : (statsData.assignments ?? 0);
+
         setDashboardStats({
-          assignments: statsData.assignments ?? 0,
+          assignments: groupedAssignmentCount,
           students: filteredStudentCount,
           reviews: statsData.reviews ?? 0
         });

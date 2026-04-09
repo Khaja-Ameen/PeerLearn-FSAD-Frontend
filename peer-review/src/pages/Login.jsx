@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { BookOpen, Check, Eye, EyeOff, LogIn, UserPlus } from 'lucide-react';
 import api from '../api';
 import { isValidPasswordByPolicy, PASSWORD_POLICY_TEXT } from '../utils/passwordPolicy';
-
+//login page
 const Login = () => {
   const navigate = useNavigate();
   const [role, setRole] = useState('Student');

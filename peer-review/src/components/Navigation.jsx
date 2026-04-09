@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Bell, LogOut, User } from 'lucide-react';
 import api from '../api';
-
+//navigation
 const Navigation = ({ role }) => {
   const location = useLocation();
   const navigate = useNavigate();

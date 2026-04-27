@@ -1,14 +1,17 @@
 
 import axios from 'axios';
 
+// Use Netlify environment variable if set, otherwise fallback to localhost for local dev
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api';
 
 const api = axios.create({
-baseURL: apiBaseUrl,
-headers: {
-'Content-Type': 'application/json'
-}
+    baseURL: apiBaseUrl,
+    headers: {
+        'Content-Type': 'application/json'
+    }
 });
+
+export default api;
 const normalizeUploadUrl = (value) => {
     if (!value || typeof value !== 'string') return '';
     const trimmed = value.trim();

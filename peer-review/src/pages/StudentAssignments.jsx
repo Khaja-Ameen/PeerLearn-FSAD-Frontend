@@ -168,7 +168,9 @@ const StudentAssignments = () => {
             }
           ])
         );
-        const mapped = (assignmentRes.data || []).map((a) => mapAssignment(a, submissionMap));
+        const mapped = (assignmentRes.data || [])
+          .filter((a, index, arr) => arr.findIndex(x => x.id === a.id) === index) // Deduplicate by ID
+          .map((a) => mapAssignment(a, submissionMap));
         setAssignments(mapped);
       } catch (error) {
         setAssignments([]);

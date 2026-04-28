@@ -52,6 +52,7 @@ const StudentCalendar = () => {
         );
 
         const assignmentDeadlines = (assignmentsRes.data || [])
+          .filter((a, index, arr) => arr.findIndex(x => x.id === a.id) === index) // Deduplicate by ID
           .filter((a) => !submittedAssignmentIds.has(a.id))
           .map((a) => {
             const date = new Date(a.dueDate);

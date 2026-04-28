@@ -40,7 +40,12 @@ const StudentDashboard = () => {
         const submissions = submissionsRes.data || [];
         const submittedAssignmentIds = new Set(submissions.map((s) => s.assignmentId));
 
-        const pending = (assignmentsRes.data || [])
+        // Deduplicate assignments by ID to prevent showing duplicates
+        const uniqueAssignments = Array.from(
+          new Map((assignmentsRes.data || []).map(a => [a.id, a])).values()
+        );
+
+        const pending = uniqueAssignments
           .filter((a) => !submittedAssignmentIds.has(a.id))
           .map((a) => ({
             id: a.id,

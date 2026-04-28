@@ -37,7 +37,9 @@ const TeacherCalendar = () => {
     const loadDeadlines = async () => {
       try {
         const { data } = await api.get('/assignments/teacher');
-        const mapped = (data || []).map((a) => {
+        const mapped = (data || [])
+          .filter((a, index, arr) => arr.findIndex(x => x.id === a.id) === index) // Deduplicate by ID
+          .map((a) => {
           const date = new Date(a.dueDate);
           return {
             id: a.id,

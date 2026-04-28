@@ -108,6 +108,7 @@ const TeacherAssignments = () => {
   const [isBulkMissingGrading, setIsBulkMissingGrading] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [isGroupManagerOpen, setIsGroupManagerOpen] = useState(false);
   const [groupManagerAssignment, setGroupManagerAssignment] = useState(null);
   const [groupSectionStudents, setGroupSectionStudents] = useState([]);
@@ -497,6 +498,8 @@ const TeacherAssignments = () => {
 
   const handleCreateAssignment = async (e) => {
     e.preventDefault();
+    if (isCreating) return; // Prevent double submission
+    setIsCreating(true);
     try {
       const basePayload = {
         title: newAssignment.title,
@@ -558,6 +561,8 @@ const TeacherAssignments = () => {
       }
     } catch (error) {
       showToast("Failed to Create Assignment", "Please check inputs and try again.");
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -1375,7 +1380,7 @@ const TeacherAssignments = () => {
 
               <div className="modal-actions" style={{ borderTop: 'none', paddingTop: '1rem' }}>
                 <button type="button" className="btn-cancel" onClick={handleCloseModal}>Cancel</button>
-                <button type="submit" className="btn-cyan" style={{ background: '#0ea5e9', color: 'white' }}>Create Assignment</button>
+                <button type="submit" className="btn-cyan" style={{ background: '#0ea5e9', color: 'white', opacity: isCreating ? 0.6 : 1, cursor: isCreating ? 'not-allowed' : 'pointer' }} disabled={isCreating}>{isCreating ? 'Creating...' : 'Create Assignment'}</button>
               </div>
             </form>
           </div>
